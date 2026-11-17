@@ -72,6 +72,29 @@ class V17IntegrityTest extends TestCase
         }
     }
 
+    public function test_late_provider_response_cannot_raise_remaining_quota_until_the_next_day(): void
+    {
+        Cache::flush();
+        config()->set('football.free_plan_mode', true);
+        config()->set('football.free_daily_reserve', 20);
+
+        $quota = app(ProviderQuotaService::class);
+        $this->travelTo(\Illuminate\Support\Carbon::parse('2026-11-17 23:55:00', 'UTC'));
+        try {
+            $quota->syncHeaders('api-football', ['X-RateLimit-Requests-Remaining' => ['20']]);
+            $quota->syncHeaders('api-football', ['X-RateLimit-Requests-Remaining' => ['36']]);
+            $this->assertSame(20, $quota->state()['provider_reported_remaining']);
+            $this->assertFalse($quota->canSpend('api-football', 'details'));
+
+            $this->travelTo(\Illuminate\Support\Carbon::parse('2026-11-18 00:05:00', 'UTC'));
+            $quota->syncHeaders('api-football', ['X-RateLimit-Requests-Remaining' => ['99']]);
+            $this->assertSame(99, $quota->state()['provider_reported_remaining']);
+            $this->assertTrue($quota->canSpend('api-football', 'details'));
+        } finally {
+            $this->travelBack();
+        }
+    }
+
     public function test_match_date_rejects_non_iso_input(): void
     {
         $this->getJson('/api/v1/matches?date=tomorrow')->assertUnprocessable();
