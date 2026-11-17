@@ -34,7 +34,10 @@ class DataStatusController extends Controller
                     'catalog_daily_cap' => config('football.free_catalog_daily_cap'),
                     'public_health_uses_provider_request' => false,
                 ],
-                'last_syncs' => DataProviderSyncLog::latest()->limit(8)->get(),
+                'last_syncs' => DataProviderSyncLog::latest()->limit(8)->get([
+                    'id', 'provider', 'resource', 'status', 'records', 'duration_ms',
+                    'started_at', 'finished_at', 'created_at', 'updated_at',
+                ]),
                 'freshness' => [
                     'latest_match_sync' => FootballMatch::max('last_synced_at'),
                     'latest_news' => Article::max('published_at'),
