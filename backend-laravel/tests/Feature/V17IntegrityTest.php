@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\DataProviderSyncLog;
 use App\Services\DesignStudioService;
 use App\Services\ProviderQuotaService;
 use App\Support\FootballStatus;
@@ -59,5 +60,30 @@ class V17IntegrityTest extends TestCase
     public function test_match_date_rejects_non_iso_input(): void
     {
         $this->getJson('/api/v1/matches?date=tomorrow')->assertUnprocessable();
+    }
+
+    public function test_public_data_status_omits_raw_provider_diagnostics(): void
+    {
+        $log = DataProviderSyncLog::create([
+            'provider' => 'fixture',
+            'resource' => 'matches',
+            'status' => 'failed',
+            'records' => 0,
+            'duration_ms' => 32,
+            'message' => 'Synthetic internal provider error',
+            'meta' => ['credential' => 'test-only-private-value'],
+            'started_at' => now(),
+            'finished_at' => now(),
+        ]);
+
+        $syncs = $this->getJson('/api/v1/data-status')
+            ->assertOk()
+            ->json('data.last_syncs');
+        $entry = collect($syncs)->firstWhere('id', $log->id);
+        $this->assertNotNull($entry);
+        $this->assertSame('failed', $entry['status']);
+        $this->assertSame('matches', $entry['resource']);
+        $this->assertArrayNotHasKey('message', $entry);
+        $this->assertArrayNotHasKey('meta', $entry);
     }
 }
