@@ -73,12 +73,23 @@ class ProviderQuotaService
         $remaining = $this->headerInt($headers, 'x-ratelimit-requests-remaining');
         $limit = $this->headerInt($headers, 'x-ratelimit-requests-limit');
 
-        if ($limit !== null) {
-            Cache::put($this->key($provider).':reported-limit', $limit, now('UTC')->addDays(2));
+        if ($remaining === null && $limit === null) {
+            return;
         }
-        if ($remaining !== null) {
-            Cache::put($this->key($provider).':reported-remaining', $remaining, now('UTC')->addDays(2));
-        }
+        $key = $this->key($provider);
+        Cache::lock($key.':lock', 5)->block(3, function () use ($key, $limit, $remaining) {
+            $expires = now('UTC')->addDays(2);
+            if ($limit !== null) {
+                Cache::put($key.':reported-limit', $limit, $expires);
+            }
+            if ($remaining !== null) {
+                $previous = Cache::get($key.':reported-remaining');
+                // In-flight responses can arrive out of order. An older
+                // report cannot restore spent requests in the same UTC day.
+                $safeRemaining = is_numeric($previous) ? min((int) $previous, $remaining) : $remaining;
+                Cache::put($key.':reported-remaining', $safeRemaining, $expires);
+            }
+        });
     }
 
     public function state(string $provider = 'api-football'): array
