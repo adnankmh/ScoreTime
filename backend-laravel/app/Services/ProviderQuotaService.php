@@ -56,8 +56,10 @@ class ProviderQuotaService
         if (!$this->enabled($provider)) return true;
         $state = $this->state($provider);
         $usable = max(0, $state['limit'] - $state['reserve']);
+        $reported = $state['provider_reported_remaining'];
         $bucketState = $state['buckets'][$bucket] ?? ['used' => 0, 'cap' => null];
-        $withinDaily = $state['used'] + $requests <= $usable;
+        $withinDaily = $state['used'] + $requests <= $usable
+            && ($reported === null || $requests <= max(0, $reported - $state['reserve']));
         $withinBucket = $bucketState['cap'] === null || $bucketState['used'] + $requests <= $bucketState['cap'];
         return $withinDaily && $withinBucket;
     }

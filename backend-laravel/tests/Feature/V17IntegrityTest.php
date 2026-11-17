@@ -44,6 +44,21 @@ class V17IntegrityTest extends TestCase
         $this->assertSame(17, Cache::get('scoretime:test:quota-sentinel'));
     }
 
+    public function test_batch_quota_preflight_respects_the_provider_reported_reserve(): void
+    {
+        Cache::flush();
+        config()->set('football.free_plan_mode', true);
+        config()->set('football.free_daily_limit', 100);
+        config()->set('football.free_daily_reserve', 20);
+        config()->set('football.free_detail_daily_cap', 10);
+
+        $quota = app(ProviderQuotaService::class);
+        $this->assertTrue($quota->canSpend('api-football', 'details', 3));
+        $quota->syncHeaders('api-football', ['X-RateLimit-Requests-Remaining' => ['22']]);
+        $this->assertFalse($quota->canSpend('api-football', 'details', 3));
+        $this->assertTrue($quota->canSpend('api-football', 'details', 2));
+    }
+
     public function test_all_six_web_locales_have_identical_keys(): void
     {
         $locales = ['en', 'ar', 'fr', 'es', 'de', 'tr'];
