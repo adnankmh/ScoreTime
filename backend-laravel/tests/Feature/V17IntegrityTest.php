@@ -95,6 +95,27 @@ class V17IntegrityTest extends TestCase
         }
     }
 
+    public function test_overlapping_requests_cannot_spend_the_same_reported_balance(): void
+    {
+        Cache::flush();
+        config()->set('football.free_plan_mode', true);
+        config()->set('football.free_daily_limit', 100);
+        config()->set('football.free_daily_reserve', 20);
+        $quota = app(ProviderQuotaService::class);
+        $quota->syncHeaders('api-football', ['X-RateLimit-Requests-Remaining' => ['22']]);
+
+        $quota->beforeCall('api-football', 'live');
+        $this->assertSame(21, $quota->state()['estimated_remaining']);
+        $this->assertFalse($quota->canSpend('api-football', 'details', 2));
+        $quota->beforeCall('api-football', 'details');
+        $quota->syncHeaders('api-football', ['X-RateLimit-Requests-Remaining' => ['23']]);
+        $this->assertSame(22, $quota->state()['provider_reported_remaining']);
+        $this->assertSame(20, $quota->state()['estimated_remaining']);
+        $this->assertFalse($quota->canSpend('api-football', 'schedule'));
+        $this->expectException(\RuntimeException::class);
+        $quota->beforeCall('api-football', 'schedule');
+    }
+
     public function test_match_date_rejects_non_iso_input(): void
     {
         $this->getJson('/api/v1/matches?date=tomorrow')->assertUnprocessable();
