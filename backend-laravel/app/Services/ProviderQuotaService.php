@@ -14,10 +14,7 @@ class ProviderQuotaService
         $key = $this->key($provider);
         Cache::lock($key.':lock', 5)->block(3, function () use ($provider, $bucket, $key) {
             $state = $this->state($provider);
-            $usable = max(0, $state['limit'] - $state['reserve']);
-            $reported = $state['provider_reported_remaining'];
-
-            if ($state['used'] >= $usable || ($reported !== null && $reported <= $state['reserve'])) {
+            if ($state['estimated_remaining'] <= $state['reserve']) {
                 throw new \RuntimeException(
                     "ScoreTime free-plan safety stop: {$provider} protected its final {$state['reserve']} daily requests."
                 );
@@ -32,6 +29,10 @@ class ProviderQuotaService
             }
 
             $expires = now('UTC')->addDays(2);
+            if ($state['provider_reported_remaining'] !== null) {
+                // Debit the known balance before another worker can use it.
+                Cache::put($key.':remaining-after-admission', $state['estimated_remaining'] - 1, $expires);
+            }
             Cache::add($key, 0, $expires);
             Cache::increment($key);
             Cache::add($this->bucketKey($provider, $bucket), 0, $expires);
@@ -55,11 +56,8 @@ class ProviderQuotaService
     {
         if (!$this->enabled($provider)) return true;
         $state = $this->state($provider);
-        $usable = max(0, $state['limit'] - $state['reserve']);
-        $reported = $state['provider_reported_remaining'];
         $bucketState = $state['buckets'][$bucket] ?? ['used' => 0, 'cap' => null];
-        $withinDaily = $state['used'] + $requests <= $usable
-            && ($reported === null || $requests <= max(0, $reported - $state['reserve']));
+        $withinDaily = $requests <= max(0, $state['estimated_remaining'] - $state['reserve']);
         $withinBucket = $bucketState['cap'] === null || $bucketState['used'] + $requests <= $bucketState['cap'];
         return $withinDaily && $withinBucket;
     }
@@ -95,12 +93,18 @@ class ProviderQuotaService
     public function state(string $provider = 'api-football'): array
     {
         $limit = (int) config('football.free_daily_limit', 100);
-        $used = (int) Cache::get($this->key($provider), 0);
-        $reportedLimit = Cache::get($this->key($provider).':reported-limit');
-        $reportedRemaining = Cache::get($this->key($provider).':reported-remaining');
+        $key = $this->key($provider);
+        $used = (int) Cache::get($key, 0);
+        $reportedLimit = Cache::get($key.':reported-limit');
+        $reportedRemaining = Cache::get($key.':reported-remaining');
 
         if (is_numeric($reportedLimit)) {
             $limit = (int) $reportedLimit;
+        }
+        $remaining = $limit - $used;
+        if (is_numeric($reportedRemaining)) {
+            $afterAdmission = (int) Cache::get($key.':remaining-after-admission', $reportedRemaining);
+            $remaining = min($remaining, (int) $reportedRemaining, $afterAdmission);
         }
 
         return [
@@ -109,7 +113,7 @@ class ProviderQuotaService
             'limit' => $limit,
             'reserve' => (int) config('football.free_daily_reserve', 20),
             'used' => $used,
-            'estimated_remaining' => max(0, $limit - $used),
+            'estimated_remaining' => max(0, $remaining),
             'provider_reported_remaining' => is_numeric($reportedRemaining) ? (int) $reportedRemaining : null,
             'buckets' => [
                 'live' => $this->bucketState($provider, 'live'),
